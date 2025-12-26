@@ -85,15 +85,66 @@ func getSheetsService(ctx context.Context) (*sheets.Service, error) {
 
 // getTokenFromWeb requests a token from the web, then returns the retrieved token
 func getTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
+	// Channel to receive the authorization code
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+
+	// Start local HTTP server to handle OAuth callback
+	server := &http.Server{Addr: ":8080"}
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			errChan <- fmt.Errorf("no authorization code in callback")
+			http.Error(w, "No authorization code received", http.StatusBadRequest)
+			return
+		}
+
+		// Send success response to browser
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `
+			<html>
+			<head><title>Authentication Successful</title></head>
+			<body>
+				<h1>Authentication successful!</h1>
+				<p>You can close this window and return to the terminal.</p>
+			</body>
+			</html>
+		`)
+
+		// Send code to channel
+		codeChan <- code
+	})
+
+	// Start server in background
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errChan <- fmt.Errorf("failed to start server: %w", err)
+		}
+	}()
+
+	// Generate auth URL and prompt user
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 	fmt.Printf("Go to the following link in your browser:\n%v\n\n", authURL)
-	fmt.Printf("Enter authorization code: ")
+	fmt.Println("Waiting for authentication...")
 
+	// Wait for code or error
 	var authCode string
-	if _, err := fmt.Scan(&authCode); err != nil {
-		return nil, fmt.Errorf("unable to read authorization code: %w", err)
+	select {
+	case authCode = <-codeChan:
+		// Got the code
+	case err := <-errChan:
+		server.Shutdown(ctx)
+		return nil, err
+	case <-ctx.Done():
+		server.Shutdown(ctx)
+		return nil, fmt.Errorf("authentication cancelled")
 	}
 
+	// Shutdown server
+	server.Shutdown(ctx)
+
+	// Exchange code for token
 	token, err := config.Exchange(ctx, authCode)
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve token from web: %w", err)
