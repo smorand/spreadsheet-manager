@@ -1,5 +1,5 @@
 # Binaries
-spreadsheet-manager
+bin/
 
 # Go
 *.exe

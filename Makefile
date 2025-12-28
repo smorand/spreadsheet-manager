@@ -2,34 +2,35 @@
 
 # Binary name
 BINARY_NAME=$(shell basename $$(pwd))
-SRC_DIR=src
-BUILD_DIR=.
+CMD_DIR=cmd/$(BINARY_NAME)
+BUILD_DIR=bin
 
 # Source files
-SOURCES=$(shell find $(SRC_DIR) -name '*.go')
+SOURCES=$(shell find cmd internal -name '*.go')
 
 # Build target
 build: $(BUILD_DIR)/$(BINARY_NAME)
 
 rebuild: clean-all build
 
-$(BUILD_DIR)/$(BINARY_NAME): $(SOURCES) $(SRC_DIR)/go.sum
+$(BUILD_DIR)/$(BINARY_NAME): $(SOURCES) go.sum
 	@echo "Building $(BINARY_NAME)..."
-	cd $(SRC_DIR) && go build -o ../$(BINARY_NAME) .
-	@echo "Build complete! Binary: $(BINARY_NAME)"
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
+	@echo "Build complete! Binary: $(BUILD_DIR)/$(BINARY_NAME)"
 
 # Generate go.sum
-$(SRC_DIR)/go.sum: $(SRC_DIR)/go.mod
+go.sum: go.mod
 	@echo "Downloading dependencies..."
-	@cd $(SRC_DIR) && go mod download
-	@cd $(SRC_DIR) && go mod tidy
-	@touch $(SRC_DIR)/go.sum
+	@go mod download
+	@go mod tidy
+	@touch go.sum
 	@echo "Dependencies downloaded"
 
 # Generate go.mod (only if it doesn't exist)
-$(SRC_DIR)/go.mod:
+go.mod:
 	@echo "Initializing Go module..."
-	@cd $(SRC_DIR) && go mod init $(BINARY_NAME)
+	@go mod init $(BINARY_NAME)
 
 
 # Install binary
@@ -67,29 +68,29 @@ uninstall:
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f $(BUILD_DIR)/$(BINARY_NAME)
+	@rm -rf $(BUILD_DIR)
 	@echo "Clean complete!"
 
 clean-all: clean
 	@echo "Cleaning go.mod & go.sum"
-	@rm -f $(SRC_DIR)/go.mod $(SRC_DIR)/go.sum
+	@rm -f go.mod go.sum
 	@echo "Clean complete!"
 
 # Run tests
 test:
 	@echo "Running tests..."
-	cd $(SRC_DIR) && go test -v ./...
+	go test -v ./...
 
 # Format code
 fmt:
 	@echo "Formatting code..."
-	cd $(SRC_DIR) && go fmt ./...
+	go fmt ./...
 	@echo "Format complete!"
 
 # Run go vet
 vet:
 	@echo "Running go vet..."
-	cd $(SRC_DIR) && go vet ./...
+	go vet ./...
 	@echo "Vet complete!"
 
 # Run all checks (fmt, vet, test)

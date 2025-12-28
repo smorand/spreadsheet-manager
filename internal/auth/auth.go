@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"context"
@@ -15,51 +15,40 @@ import (
 )
 
 const (
-	credentialsFile = "google_credentials.json"
-	tokenFile       = "google_token.json"
+	CallbackServerPort = ":8080"
+	CredentialsDir     = ".gdrive"
+	CredentialsFile    = "credentials.json"
+	StateDirMode       = 0700
+	TokenFile          = "token.json"
+	TokenFileMode      = 0600
 )
 
-var scopes = []string{
+var DefaultScopes = []string{
 	sheets.SpreadsheetsScope,
-	sheets.DriveFileScope,
+	sheets.DriveScope,
 }
 
-// getCredentialsPath returns the path to credentials directory
-func getCredentialsPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".credentials")
-}
+// GetClient retrieves an OAuth2 HTTP client using stored credentials
+func GetClient(ctx context.Context) (*http.Client, error) {
+	credPath := filepath.Join(getCredentialsPath(), CredentialsFile)
+	tokenPath := filepath.Join(getCredentialsPath(), TokenFile)
 
-// getClient retrieves an OAuth2 HTTP client
-func getClient(ctx context.Context) (*http.Client, error) {
-	credPath := filepath.Join(getCredentialsPath(), credentialsFile)
-	tokenPath := filepath.Join(getCredentialsPath(), tokenFile)
-
-	// Read credentials file
-	b, err := os.ReadFile(credPath)
+	credentials, err := os.ReadFile(credPath)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read credentials file %s: %w\n"+
-			"See README.md for setup instructions", credPath, err)
+		return nil, fmt.Errorf("unable to read credentials file %s: %w\nSee README.md for setup instructions", credPath, err)
 	}
 
-	// Parse credentials
-	config, err := google.ConfigFromJSON(b, scopes...)
+	config, err := google.ConfigFromJSON(credentials, DefaultScopes...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse credentials: %w", err)
 	}
 
-	// Try to load token from file
-	token, err := tokenFromFile(tokenPath)
+	token, err := loadToken(tokenPath)
 	if err != nil {
-		// Get new token from user
-		token, err = getTokenFromWeb(ctx, config)
+		token, err = requestTokenFromWeb(ctx, config)
 		if err != nil {
 			return nil, err
 		}
-		// Save token
 		if err := saveToken(tokenPath, token); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: unable to save token: %v\n", err)
 		}
@@ -68,9 +57,9 @@ func getClient(ctx context.Context) (*http.Client, error) {
 	return config.Client(ctx, token), nil
 }
 
-// getSheetsService creates an authenticated Sheets service
-func getSheetsService(ctx context.Context) (*sheets.Service, error) {
-	client, err := getClient(ctx)
+// GetSheetsService creates an authenticated Google Sheets service
+func GetSheetsService(ctx context.Context) (*sheets.Service, error) {
+	client, err := GetClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -83,14 +72,31 @@ func getSheetsService(ctx context.Context) (*sheets.Service, error) {
 	return service, nil
 }
 
-// getTokenFromWeb requests a token from the web, then returns the retrieved token
-func getTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
-	// Channel to receive the authorization code
+func getCredentialsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, CredentialsDir)
+}
+
+func loadToken(path string) (*oauth2.Token, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	token := &oauth2.Token{}
+	err = json.NewDecoder(file).Decode(token)
+	return token, err
+}
+
+func requestTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
 	codeChan := make(chan string, 1)
 	errChan := make(chan error, 1)
 
-	// Start local HTTP server to handle OAuth callback
-	server := &http.Server{Addr: ":8080"}
+	server := &http.Server{Addr: CallbackServerPort}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
@@ -100,7 +106,6 @@ func getTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token,
 			return
 		}
 
-		// Send success response to browser
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `
 			<html>
@@ -112,27 +117,22 @@ func getTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token,
 			</html>
 		`)
 
-		// Send code to channel
 		codeChan <- code
 	})
 
-	// Start server in background
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errChan <- fmt.Errorf("failed to start server: %w", err)
 		}
 	}()
 
-	// Generate auth URL and prompt user
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 	fmt.Printf("Go to the following link in your browser:\n%v\n\n", authURL)
 	fmt.Println("Waiting for authentication...")
 
-	// Wait for code or error
 	var authCode string
 	select {
 	case authCode = <-codeChan:
-		// Got the code
 	case err := <-errChan:
 		server.Shutdown(ctx)
 		return nil, err
@@ -141,10 +141,8 @@ func getTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token,
 		return nil, fmt.Errorf("authentication cancelled")
 	}
 
-	// Shutdown server
 	server.Shutdown(ctx)
 
-	// Exchange code for token
 	token, err := config.Exchange(ctx, authCode)
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve token from web: %w", err)
@@ -153,33 +151,18 @@ func getTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token,
 	return token, nil
 }
 
-// tokenFromFile retrieves a token from a local file
-func tokenFromFile(file string) (*oauth2.Token, error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	token := &oauth2.Token{}
-	err = json.NewDecoder(f).Decode(token)
-	return token, err
-}
-
-// saveToken saves a token to a file path
 func saveToken(path string, token *oauth2.Token) error {
 	fmt.Fprintf(os.Stderr, "Saving credentials to: %s\n", path)
 
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), StateDirMode); err != nil {
 		return err
 	}
 
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, TokenFileMode)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer file.Close()
 
-	return json.NewEncoder(f).Encode(token)
+	return json.NewEncoder(file).Encode(token)
 }

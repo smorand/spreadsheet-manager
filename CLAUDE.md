@@ -15,26 +15,75 @@
 
 ### Code Organization
 
+Following the Standard Go Project Layout:
+
 ```
-src/
-├── main.go      - Entry point, command registration
-├── cli.go       - All command definitions and implementations
-├── auth.go      - OAuth2 authentication logic
-├── helpers.go   - Utility functions (A1 notation, colors, etc.)
-├── go.mod       - Module definition
-└── go.sum       - Dependency checksums
+spreadsheet-manager/
+├── cmd/
+│   └── spreadsheet-manager/
+│       └── main.go                    - Minimal entry point
+├── internal/
+│   ├── auth/
+│   │   └── auth.go                    - OAuth2 authentication logic
+│   ├── cli/
+│   │   ├── constants.go               - CLI constants
+│   │   ├── create.go                  - Create spreadsheet commands
+│   │   ├── csv.go                     - CSV import/export commands
+│   │   ├── data.go                    - Data manipulation commands
+│   │   ├── format.go                  - Cell formatting commands
+│   │   ├── root.go                    - Root command and registration
+│   │   ├── sheet.go                   - Sheet management commands
+│   │   └── style.go                   - Cell styling commands
+│   └── helpers/
+│       ├── a1notation.go              - A1 notation parsing
+│       ├── color.go                   - Color conversion utilities
+│       ├── format.go                  - Format pattern helpers
+│       ├── json.go                    - JSON output helper
+│       └── sheet.go                   - Sheet ID resolution
+├── go.mod                             - Module definition
+├── go.sum                             - Dependency checksums
+├── Makefile                           - Build automation
+├── CLAUDE.md                          - AI-oriented documentation
+└── README.md                          - Human-oriented documentation
 ```
 
 ### Authentication Flow
 
-1. Check for credentials at `~/.credentials/google_credentials.json`
-2. Load existing token from `~/.credentials/google_token.json` or initiate OAuth flow
-3. Token is cached and reused for subsequent requests
-4. Context is properly passed through all authentication functions
+Implemented in `internal/auth/auth.go`:
+
+1. Check for credentials at `~/.gdrive/credentials.json`
+2. Load existing token from `~/.gdrive/token.json` or initiate OAuth flow
+3. OAuth flow uses local callback server on port 8080
+4. Token is cached and reused for subsequent requests
+5. Context is properly passed through all authentication functions
+
+### Package Structure
+
+**`internal/auth`**: OAuth2 authentication
+- Exports `GetClient()` and `GetSheetsService()` functions
+- All credentials and token handling is encapsulated
+- Constants for paths and permissions
+
+**`internal/cli`**: Command definitions
+- Each command group in separate file (create, data, csv, format, style, sheet)
+- Root command and registration in `root.go`
+- Constants for common values in `constants.go`
+- Commands use IIFE pattern to avoid `init()` functions
+
+**`internal/helpers`**: Utility functions
+- `a1notation.go`: A1 notation parsing (A1ToGrid, ParseRange)
+- `color.go`: Hex color to RGB conversion
+- `format.go`: Default format patterns for cell formatting
+- `json.go`: JSON output helper
+- `sheet.go`: Sheet ID resolution
+
+**`cmd/spreadsheet-manager`**: Entry point
+- Minimal main.go that only calls cli.RootCmd.Execute()
+- No business logic in main package
 
 ### Command Structure
 
-All commands follow a consistent pattern using immediately-invoked function expressions (IIFE) to avoid `init()` functions:
+Commands use immediately-invoked function expressions (IIFE) to avoid `init()` functions:
 
 ```go
 var commandCmd = func() *cobra.Command {
@@ -49,27 +98,36 @@ var commandCmd = func() *cobra.Command {
 }()
 ```
 
+Commands are registered in `internal/cli/root.go` using `init()` function for command registration only.
+
 ## Key Implementation Details
 
 ### A1 Notation Handling
 
-- `a1ToGrid(cell string)` - Converts "A1" to (0,0) grid coordinates
-- `parseRange(rangeA1 string)` - Parses "A1:B10" to start/end coordinates
+In `internal/helpers/a1notation.go`:
+- `A1ToGrid(cell string)` - Converts "A1" to (0,0) grid coordinates
+- `ParseRange(rangeA1 string)` - Parses "A1:B10" to start/end coordinates
 - All coordinates are 0-indexed internally
+- Exported functions use PascalCase
 
 ### Color Handling
 
-- `parseColor(hexColor string)` - Converts "#ff0000" to RGB values (0.0-1.0 range)
+In `internal/helpers/color.go`:
+- `ParseColor(hexColor string)` - Converts "#ff0000" to RGB values (0.0-1.0 range)
 - Colors in Google Sheets API use float values from 0.0 to 1.0
+- Constants defined for hex color length and RGB max value
 
 ### Format Patterns
 
-Default patterns stored in `getDefaultFormatPattern()`:
-- NUMBER: `#,##0.00`
-- CURRENCY: `$#,##0.00`
-- DATE: `yyyy-mm-dd`
-- PERCENT: `0.00%`
-- TIME: `hh:mm:ss`
+In `internal/helpers/format.go`:
+- `GetDefaultFormatPattern(formatType string)` returns default patterns
+- Constants defined for format types (FormatTypeNumber, FormatTypeCurrency, etc.)
+- Default patterns:
+  - NUMBER: `#,##0.00`
+  - CURRENCY: `$#,##0.00`
+  - DATE: `yyyy-mm-dd`
+  - PERCENT: `0.00%`
+  - TIME: `hh:mm:ss`
 
 ## Command Reference
 
