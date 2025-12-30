@@ -16,10 +16,10 @@ import (
 
 const (
 	CallbackServerPort = ":8080"
-	CredentialsDir     = ".gdrive"
-	CredentialsFile    = "credentials.json"
+	CredentialsDir     = ".credentials"
+	CredentialsFile    = "google_credentials.json"
 	StateDirMode       = 0700
-	TokenFile          = "token.json"
+	TokenFile          = "token_gdrive.json"
 	TokenFileMode      = 0600
 )
 
