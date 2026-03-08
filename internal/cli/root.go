@@ -11,12 +11,17 @@ var RootCmd = &cobra.Command{
 func init() {
 	RootCmd.AddCommand(addDataCmd)
 	RootCmd.AddCommand(addNoteCmd)
+	RootCmd.AddCommand(alternateRowColorsCmd)
 	RootCmd.AddCommand(createCmd)
 	RootCmd.AddCommand(createSheetCmd)
 	RootCmd.AddCommand(exportCSVCmd)
 	RootCmd.AddCommand(formatCellsCmd)
+	RootCmd.AddCommand(freezeCmd)
 	RootCmd.AddCommand(importCSVCmd)
 	RootCmd.AddCommand(listSheetsCmd)
 	RootCmd.AddCommand(renameSheetCmd)
+	RootCmd.AddCommand(setAlignmentCmd)
+	RootCmd.AddCommand(setColumnWidthCmd)
+	RootCmd.AddCommand(setTextWrapCmd)
 	RootCmd.AddCommand(styleCellsCmd)
 }
