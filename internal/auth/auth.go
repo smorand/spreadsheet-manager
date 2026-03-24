@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -15,37 +18,42 @@ import (
 )
 
 const (
-	CallbackServerPort = ":8080"
-	CredentialsDir     = ".credentials"
-	CredentialsFile    = "google_credentials.json"
-	StateDirMode       = 0700
-	TokenFile          = "token_gdrive.json"
-	TokenFileMode      = 0600
+	CredentialsFile = "google_credentials.json"
+	TokenFile       = "google_token_sheets.json"
 )
 
-var DefaultScopes = []string{
+var Scopes = []string{
 	sheets.SpreadsheetsScope,
 	sheets.DriveScope,
 }
 
+// GetCredentialsPath returns the path to the credentials directory.
+func GetCredentialsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".credentials")
+}
+
 // GetClient retrieves an OAuth2 HTTP client using stored credentials
 func GetClient(ctx context.Context) (*http.Client, error) {
-	credPath := filepath.Join(getCredentialsPath(), CredentialsFile)
-	tokenPath := filepath.Join(getCredentialsPath(), TokenFile)
+	credPath := filepath.Join(GetCredentialsPath(), CredentialsFile)
+	tokenPath := filepath.Join(GetCredentialsPath(), TokenFile)
 
 	credentials, err := os.ReadFile(credPath)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read credentials file %s: %w\nSee README.md for setup instructions", credPath, err)
 	}
 
-	config, err := google.ConfigFromJSON(credentials, DefaultScopes...)
+	config, err := google.ConfigFromJSON(credentials, Scopes...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse credentials: %w", err)
 	}
 
 	token, err := loadToken(tokenPath)
 	if err != nil {
-		token, err = requestTokenFromWeb(ctx, config)
+		token, err = requestTokenFromWeb(config)
 		if err != nil {
 			return nil, err
 		}
@@ -72,14 +80,6 @@ func GetSheetsService(ctx context.Context) (*sheets.Service, error) {
 	return service, nil
 }
 
-func getCredentialsPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, CredentialsDir)
-}
-
 func loadToken(path string) (*oauth2.Token, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -92,24 +92,23 @@ func loadToken(path string) (*oauth2.Token, error) {
 	return token, err
 }
 
-func requestTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
-	codeChan := make(chan string, 1)
-	errChan := make(chan error, 1)
+func requestTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
+	config.RedirectURL = "http://localhost:8080/oauth2callback"
 
-	server := &http.Server{Addr: CallbackServerPort}
+	codeChan := make(chan string)
+	errChan := make(chan error)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	server := &http.Server{Addr: ":8080"}
+	http.HandleFunc("/oauth2callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		if code == "" {
-			errChan <- fmt.Errorf("no authorization code in callback")
-			http.Error(w, "No authorization code received", http.StatusBadRequest)
+			errChan <- fmt.Errorf("no code in callback")
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `
 			<html>
-			<head><title>Authentication Successful</title></head>
 			<body>
 				<h1>Authentication successful!</h1>
 				<p>You can close this window and return to the terminal.</p>
@@ -122,43 +121,60 @@ func requestTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.To
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errChan <- fmt.Errorf("failed to start server: %w", err)
+			errChan <- err
 		}
 	}()
 
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Go to the following link in your browser:\n%v\n\n", authURL)
-	fmt.Println("Waiting for authentication...")
+	time.Sleep(100 * time.Millisecond)
 
-	var authCode string
-	select {
-	case authCode = <-codeChan:
-	case err := <-errChan:
-		server.Shutdown(ctx)
-		return nil, err
-	case <-ctx.Done():
-		server.Shutdown(ctx)
-		return nil, fmt.Errorf("authentication cancelled")
+	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	fmt.Printf("Opening browser for authentication...\n")
+	fmt.Printf("If browser doesn't open, visit:\n%v\n\n", authURL)
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", authURL)
+	case "linux":
+		cmd = exec.Command("xdg-open", authURL)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", authURL)
 	}
 
-	server.Shutdown(ctx)
+	if cmd != nil {
+		_ = cmd.Start()
+	}
 
-	token, err := config.Exchange(ctx, authCode)
+	var code string
+	select {
+	case code = <-codeChan:
+	case err := <-errChan:
+		return nil, err
+	case <-time.After(3 * time.Minute):
+		return nil, fmt.Errorf("authentication timeout after 3 minutes")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = server.Shutdown(ctx)
+
+	tok, err := config.Exchange(context.Background(), code)
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve token from web: %w", err)
 	}
 
-	return token, nil
+	fmt.Println("\nAuthentication successful!")
+	return tok, nil
 }
 
 func saveToken(path string, token *oauth2.Token) error {
 	fmt.Fprintf(os.Stderr, "Saving credentials to: %s\n", path)
 
-	if err := os.MkdirAll(filepath.Dir(path), StateDirMode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
 
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, TokenFileMode)
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
