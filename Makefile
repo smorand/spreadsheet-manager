@@ -1,4 +1,4 @@
-.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help
+.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help deploy-vps
 
 # Binary name derived from current directory
 BINARY_NAME=$(shell basename $$(pwd))
@@ -259,6 +259,20 @@ endif
 check: fmt vet test
 	@echo "All checks passed!"
 
+# Deploy to VPS
+VPS_HOST=root@31.97.54.67
+VPS_DOMAIN=spreadsheet-manager.scm-platform.org
+VPS_PORT=8080
+VPS_TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "main")
+
+deploy-vps:
+	@echo "Deploying $(BINARY_NAME)@$(VPS_TAG) to VPS..."
+	@ssh $(VPS_HOST) "cd /opt/nginx-reverse-proxy && \
+		./scripts/vps-undeploy.sh $(BINARY_NAME) 2>/dev/null; \
+		LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/vps-deploy.sh smorand/$(BINARY_NAME)@$(VPS_TAG) prod $(VPS_DOMAIN):$(VPS_PORT) ./environments"
+	@echo ""
+	@echo "Verify: https://$(VPS_DOMAIN)/health"
+
 # Show current platform info
 info:
 	@echo "Current platform: $(CURRENT_PLATFORM)"
@@ -281,6 +295,7 @@ help:
 	@echo "  fmt             - Format code"
 	@echo "  vet             - Run go vet"
 	@echo "  check           - Run fmt, vet, and test"
+	@echo "  deploy-vps      - Deploy to VPS (uses latest tag, or VPS_TAG=v1.x.0)"
 	@echo "  info            - Show current platform information"
 	@echo "  help            - Show this help message"
 	@echo ""
