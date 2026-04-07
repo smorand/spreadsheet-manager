@@ -3,6 +3,7 @@
 ## Production Environment
 
 **URL**: https://spreadsheet-manager.scm-platform.org
+**MCP endpoint**: https://spreadsheet-manager.scm-platform.org/mcp
 **VPS IP**: 31.97.54.67
 **Container**: `spreadsheet-manager` on `proxy-network`
 **Port**: 8080 (internal, nginx proxies HTTPS)
@@ -12,26 +13,41 @@
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
 | `/health` | None | Health check |
+| `/mcp` | Bearer token | MCP Streamable HTTP endpoint |
 | `/.well-known/oauth-protected-resource` | None | RFC 9728 metadata |
 | `/.well-known/oauth-authorization-server` | None | RFC 8414 metadata |
 | `/oauth/register` | None | Dynamic Client Registration (RFC 7591) |
 | `/oauth/authorize` | None | OAuth authorization (redirects to Google) |
 | `/oauth/callback` | None | Google OAuth callback |
 | `/oauth/token` | None | Token exchange and refresh |
-| `/` | Bearer token | MCP Streamable HTTP endpoint |
 
 ## Credentials
 
-**OAuth credential file**: `scm-pwd-web.json` (Google OAuth Web Application credentials)
-- Local dev: `~/.credentials/scm-pwd-web.json`
-- VPS: `/app/data/spreadsheet-manager/scm-pwd-web.json`
-- Vault backup: `secret/spreadsheet-manager/scm-pwd-web` (field: `credentials`)
+**Google OAuth Web Application credentials** (`scm-pwd-web.json`) are stored in HashiCorp Vault on the VPS. This is a shared credential used by multiple MCP servers.
 
-**Restoring credentials from Vault** (on VPS):
+**Credential loading priority**:
+1. GCP Secret Manager (for Cloud Run, if SECRET_PROJECT + SECRET_NAME are set)
+2. HashiCorp Vault (for VPS, if VAULT_ADDR + VAULT_SECRET_PATH are set)
+3. Local file (for development, via CREDENTIAL_FILE or `~/.credentials/scm-pwd-web.json`)
+
+**Vault configuration** (in `/app/data/spreadsheet-manager/.env`):
+```env
+VAULT_ADDR=http://vault:8200
+VAULT_TOKEN=<vault-token>
+VAULT_SECRET_PATH=secret/credentials/google-credentials
+```
+
+**Vault secret path**: `secret/credentials/google-credentials` (shared, field: `credentials`)
+
+**Managing the shared credential in Vault**:
 ```bash
-docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=B5MJcZJZMum6xam6GKmEW6je vault \
-  vault kv get -field=credentials secret/spreadsheet-manager/scm-pwd-web > /app/data/spreadsheet-manager/scm-pwd-web.json
-chmod 600 /app/data/spreadsheet-manager/scm-pwd-web.json
+# Read
+docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=<token> vault \
+  vault kv get -field=credentials secret/credentials/google-credentials
+
+# Write (from local file)
+docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=<token> vault \
+  vault kv put secret/credentials/google-credentials credentials="$(cat scm-pwd-web.json)"
 ```
 
 ## DNS
@@ -43,74 +59,44 @@ chmod 600 /app/data/spreadsheet-manager/scm-pwd-web.json
 # Create (already done)
 gcloud dns record-sets create "spreadsheet-manager.scm-platform.org." \
   --zone=scm-platform-org --type=A --ttl=3600 --rrdatas="31.97.54.67"
-
-# Verify
-dig +short spreadsheet-manager.scm-platform.org A
 ```
 
 ## SSL Certificate
 
 **Provider**: Let's Encrypt (auto-renewal via certbot systemd timer)
-**Expires**: 2026-07-06
+**Obtained automatically** by `vps-deploy.sh` when `LETSENCRYPT_EMAIL` is set.
 
-```bash
-# Renew manually if needed (on VPS)
-cd /opt/nginx-reverse-proxy
-LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/letsencrypt.sh renew
-./scripts/proxy.sh reload
-```
-
-## Deploying a New Version
+## Deploying / Updating
 
 ```bash
 # 1. Commit and tag
 git tag v1.x.0
 git push origin main --tags
 
-# 2. On VPS: re-clone and rebuild
+# 2. Deploy via vps-deploy.sh (on VPS)
 ssh root@31.97.54.67
-cd /app/services
-rm -rf spreadsheet-manager
-git clone --branch v1.x.0 --depth 1 https://github.com/smorand/spreadsheet-manager.git
-cd spreadsheet-manager
-docker compose -f docker-compose.prod.yml up -d --build
+cd /opt/nginx-reverse-proxy
+./scripts/vps-undeploy.sh spreadsheet-manager
+LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/vps-deploy.sh smorand/spreadsheet-manager@v1.x.0 prod spreadsheet-manager.scm-platform.org:8080 ./environments
 
-# Data in /app/data/spreadsheet-manager/ is preserved across deployments
+# Data in /app/data/spreadsheet-manager/ (.env, Vault config) is preserved across deployments
 ```
 
 ## VPS File Layout
 
 ```
-/app/services/spreadsheet-manager/     # Cloned repo
-/app/data/spreadsheet-manager/         # Persistent data
-  .env                                 # Environment variables
-  scm-pwd-web.json                     # OAuth credentials
+/app/services/spreadsheet-manager/     # Cloned repo (rebuilt on each deploy)
+/app/data/spreadsheet-manager/         # Persistent data (preserved)
+  .env                                 # Environment variables (Vault config)
 /logs/spreadsheet-manager/             # Logs
 ```
 
-## Nginx Route
-
-```
-spreadsheet-manager.scm-platform.org -> spreadsheet-manager:8080
-```
-
-**Important**: The upstream must point to the container name `spreadsheet-manager`, not `host.docker.internal`.
-
-```bash
-# Verify route (on VPS)
-cd /opt/nginx-reverse-proxy
-./scripts/proxy.sh list | grep spreadsheet
-
-# Fix if needed
-./scripts/proxy.sh remove spreadsheet-manager.scm-platform.org
-./scripts/proxy.sh add spreadsheet-manager.scm-platform.org 8080 spreadsheet-manager
-./scripts/proxy.sh reload
-```
+No credential files on disk. Credentials are loaded from Vault at runtime.
 
 ## Troubleshooting
 
-**502 Bad Gateway**: nginx upstream points to wrong target. Check route with `proxy.sh list`, fix with commands above.
+**502 Bad Gateway**: Nginx upstream wrong. Verify with `proxy.sh list | grep spreadsheet`. The upstream should be `spreadsheet-manager`, not `host.docker.internal`. This is fixed in `vps-deploy.sh` (passes container name as upstream).
 
-**Container unhealthy**: Check logs with `docker logs spreadsheet-manager`. Verify credential file exists at `/app/data/spreadsheet-manager/scm-pwd-web.json`.
+**OAuth configuration error (500)**: Vault unreachable or wrong secret path. Check `docker logs spreadsheet-manager` for Vault errors. Verify env vars with `docker exec spreadsheet-manager env | grep VAULT`.
 
-**OAuth errors**: Verify `BASE_URL` in `.env` matches the actual domain. Verify `scm-pwd-web.json` contains valid Google OAuth Web Application credentials with the redirect URI `https://spreadsheet-manager.scm-platform.org/oauth/callback`.
+**Container unhealthy**: Check `docker logs spreadsheet-manager`. Verify the container can reach Vault: `docker exec spreadsheet-manager wget -qO- http://vault:8200/v1/sys/health`.
