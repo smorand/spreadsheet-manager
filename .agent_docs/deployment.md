@@ -75,7 +75,7 @@ git push origin main --tags
 
 # 2. Deploy via vps-deploy.sh (on VPS)
 ssh root@31.97.54.67
-cd /opt/nginx-reverse-proxy
+cd /opt/vps-management
 ./scripts/vps-undeploy.sh spreadsheet-manager
 LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/vps-deploy.sh smorand/spreadsheet-manager@v1.x.0 prod spreadsheet-manager.scm-platform.org:8080 ./environments
 
