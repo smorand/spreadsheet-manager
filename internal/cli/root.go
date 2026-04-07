@@ -19,6 +19,7 @@ func init() {
 	RootCmd.AddCommand(freezeCmd)
 	RootCmd.AddCommand(importCSVCmd)
 	RootCmd.AddCommand(listSheetsCmd)
+	RootCmd.AddCommand(mcpCmd)
 	RootCmd.AddCommand(renameSheetCmd)
 	RootCmd.AddCommand(setAlignmentCmd)
 	RootCmd.AddCommand(setColumnWidthCmd)

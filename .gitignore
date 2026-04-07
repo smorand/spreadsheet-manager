@@ -21,3 +21,6 @@ go.work
 # OS
 .DS_Store
 Thumbs.db
+
+# Deployment environment files (may contain secrets)
+environments/prod/.env

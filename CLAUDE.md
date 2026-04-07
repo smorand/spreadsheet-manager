@@ -2,14 +2,16 @@
 
 ## Project Overview
 
-**Type**: Command-line tool
-**Language**: Go 1.21
-**Purpose**: Comprehensive Google Sheets management via CLI
+**Type**: Command-line tool + MCP server
+**Language**: Go 1.25
+**Purpose**: Comprehensive Google Sheets management via CLI and MCP (Model Context Protocol)
 **Primary Dependencies**:
 - `github.com/spf13/cobra` - CLI framework
+- `github.com/modelcontextprotocol/go-sdk/mcp` - MCP protocol (official SDK)
 - `google.golang.org/api/sheets/v4` - Google Sheets API
 - `google.golang.org/api/drive/v3` - Google Drive API
 - `golang.org/x/oauth2` - OAuth2 authentication
+- `cloud.google.com/go/secretmanager` - GCP Secret Manager
 
 ## Architecture
 
@@ -24,9 +26,10 @@ spreadsheet-manager/
 │       └── main.go                    - Minimal entry point
 ├── internal/
 │   ├── auth/
-│   │   └── auth.go                    - OAuth2 authentication logic
+│   │   └── auth.go                    - Dual-mode OAuth2 (CLI file-based + MCP context-based)
 │   ├── cli/
 │   │   ├── constants.go               - CLI constants
+│   │   ├── mcp.go                     - MCP server subcommand
 │   │   ├── create.go                  - Create spreadsheet commands
 │   │   ├── csv.go                     - CSV import/export commands
 │   │   ├── data.go                    - Data manipulation commands
@@ -34,28 +37,64 @@ spreadsheet-manager/
 │   │   ├── root.go                    - Root command and registration
 │   │   ├── sheet.go                   - Sheet management commands
 │   │   └── style.go                   - Cell styling commands
-│   └── helpers/
-│       ├── a1notation.go              - A1 notation parsing
-│       ├── color.go                   - Color conversion utilities
-│       ├── format.go                  - Format pattern helpers
-│       ├── json.go                    - JSON output helper
-│       └── sheet.go                   - Sheet ID resolution
+│   ├── helpers/
+│   │   ├── a1notation.go              - A1 notation parsing
+│   │   ├── color.go                   - Color conversion utilities
+│   │   ├── format.go                  - Format pattern helpers
+│   │   ├── json.go                    - JSON output helper
+│   │   └── sheet.go                   - Sheet ID resolution
+│   └── mcp/
+│       ├── handler.go                 - MCP handler, RegisterTools, input types
+│       ├── oauth2.go                  - OAuth 2.1 server (RFC 8414, 7591, 9728)
+│       ├── server.go                  - HTTP server, auth middleware, graceful shutdown
+│       ├── tools_banding.go           - Alternate row colors handler
+│       ├── tools_create.go            - Create spreadsheet/sheet handlers
+│       ├── tools_csv.go               - CSV import/export handlers
+│       ├── tools_data.go              - Add data/note handlers
+│       ├── tools_format.go            - Format cells handler
+│       ├── tools_layout.go            - Freeze, column width, text wrap, alignment handlers
+│       ├── tools_sheet.go             - List/rename sheets handlers
+│       └── tools_style.go             - Style cells handler
 ├── go.mod                             - Module definition
 ├── go.sum                             - Dependency checksums
 ├── Makefile                           - Build automation
+├── Dockerfile                         - Multi-stage Docker build for VPS deployment
+├── docker-compose.prod.yml            - VPS deployment composition
 ├── CLAUDE.md                          - AI-oriented documentation
 └── README.md                          - Human-oriented documentation
 ```
 
+### MCP Server
+
+The project includes an HTTP Streamable MCP server (`spreadsheet-manager mcp`) that exposes all 15 spreadsheet operations as MCP tools with OAuth 2.1 authentication.
+
+**Starting the server:**
+```bash
+# Local development
+spreadsheet-manager mcp --credential-file ~/.credentials/scm-pwd-web.json --base-url http://localhost:8080
+
+# With environment variables (VPS/Docker)
+PORT=8080 BASE_URL=https://spreadsheet-manager.scm-platform.org spreadsheet-manager mcp
+```
+
+**MCP Tools (15):** `spreadsheet_create`, `spreadsheet_add_data`, `spreadsheet_import_csv`, `spreadsheet_export_csv`, `spreadsheet_format_cells`, `spreadsheet_style_cells`, `spreadsheet_create_sheet`, `spreadsheet_rename_sheet`, `spreadsheet_list_sheets`, `spreadsheet_add_note`, `spreadsheet_freeze`, `spreadsheet_set_column_width`, `spreadsheet_set_text_wrap`, `spreadsheet_set_alignment`, `spreadsheet_alternate_row_colors`
+
+**OAuth2 endpoints:** `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/callback`, `/oauth/token`
+
 ### Authentication Flow
 
-Implemented in `internal/auth/auth.go`:
+Implemented in `internal/auth/auth.go` with dual-mode support:
 
-1. Check for credentials at `~/.gdrive/credentials.json`
-2. Load existing token from `~/.gdrive/token.json` or initiate OAuth flow
+**MCP mode (context-based):**
+1. Auth middleware validates Bearer token and injects OAuth config + token into context
+2. `GetClient(ctx)` checks context for `WithOAuthConfig` / `WithAccessToken` values
+3. Returns authenticated HTTP client using the context-provided token
+
+**CLI mode (file-based, fallback):**
+1. Check for credentials at `~/.credentials/google_credentials.json`
+2. Load existing token from `~/.credentials/google_token_sheets.json` or initiate OAuth flow
 3. OAuth flow uses local callback server on port 8080
 4. Token is cached and reused for subsequent requests
-5. Context is properly passed through all authentication functions
 
 ### Package Structure
 
