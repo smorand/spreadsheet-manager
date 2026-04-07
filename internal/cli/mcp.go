@@ -95,6 +95,12 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		baseURL = os.Getenv("BASE_URL")
 	}
 
+	// Get credential file from env if not set via flag
+	credentialFile := mcpCredentialFile
+	if credentialFile == "" {
+		credentialFile = os.Getenv("CREDENTIAL_FILE")
+	}
+
 	// Create MCP server configuration
 	cfg := &mcpserver.Config{
 		Host:           host,
@@ -102,7 +108,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		BaseURL:        baseURL,
 		SecretName:     secretName,
 		SecretProject:  secretProject,
-		CredentialFile: mcpCredentialFile,
+		CredentialFile: credentialFile,
 	}
 
 	// Create server and register tools
