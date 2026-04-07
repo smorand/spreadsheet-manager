@@ -164,7 +164,7 @@ func (s *Server) Run(ctx context.Context) error {
 	authedMCPHandler := s.authMiddleware(mcpHandler)
 
 	// MCP endpoint (protected by OAuth2 Bearer token auth)
-	mux.Handle("/", authedMCPHandler)
+	mux.Handle("/mcp", authedMCPHandler)
 
 	log.Println("Authentication mode: OAuth2 Bearer tokens")
 
