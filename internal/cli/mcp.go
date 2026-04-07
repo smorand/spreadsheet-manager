@@ -101,14 +101,22 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		credentialFile = os.Getenv("CREDENTIAL_FILE")
 	}
 
+	// Get Vault config from env
+	vaultAddr := os.Getenv("VAULT_ADDR")
+	vaultToken := os.Getenv("VAULT_TOKEN")
+	vaultSecretPath := os.Getenv("VAULT_SECRET_PATH")
+
 	// Create MCP server configuration
 	cfg := &mcpserver.Config{
-		Host:           host,
-		Port:           port,
-		BaseURL:        baseURL,
-		SecretName:     secretName,
-		SecretProject:  secretProject,
-		CredentialFile: credentialFile,
+		Host:            host,
+		Port:            port,
+		BaseURL:         baseURL,
+		SecretName:      secretName,
+		SecretProject:   secretProject,
+		VaultAddr:       vaultAddr,
+		VaultToken:      vaultToken,
+		VaultSecretPath: vaultSecretPath,
+		CredentialFile:  credentialFile,
 	}
 
 	// Create server and register tools

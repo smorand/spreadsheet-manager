@@ -154,29 +154,38 @@ type OAuth2Server struct {
 	codes   map[string]*authorizationCode
 
 	// Configuration
-	secretProject  string
-	secretName     string
-	credentialFile string
+	secretProject   string
+	secretName      string
+	vaultAddr       string
+	vaultToken      string
+	vaultSecretPath string
+	credentialFile  string
 }
 
 // OAuth2ServerConfig holds configuration for the OAuth2 server.
 type OAuth2ServerConfig struct {
-	BaseURL        string // Base URL (e.g., https://mcp.example.com)
-	SecretProject  string // GCP project for Secret Manager
-	SecretName     string // Secret name for OAuth credentials
-	CredentialFile string // Local credential file (fallback)
+	BaseURL         string // Base URL (e.g., https://mcp.example.com)
+	SecretProject   string // GCP project for Secret Manager
+	SecretName      string // Secret name for OAuth credentials
+	VaultAddr       string // HashiCorp Vault address (e.g., http://vault:8200)
+	VaultToken      string // HashiCorp Vault token
+	VaultSecretPath string // Vault KV v2 secret path (e.g., secret/credentials/scm-pwd-web)
+	CredentialFile  string // Local credential file (fallback)
 }
 
 // NewOAuth2Server creates a new OAuth2 authorization server.
 func NewOAuth2Server(cfg *OAuth2ServerConfig) *OAuth2Server {
 	s := &OAuth2Server{
-		baseURL:        cfg.BaseURL,
-		secretProject:  cfg.SecretProject,
-		secretName:     cfg.SecretName,
-		credentialFile: cfg.CredentialFile,
-		clients:        make(map[string]*registeredClient),
-		states:         make(map[string]*authorizationState),
-		codes:          make(map[string]*authorizationCode),
+		baseURL:         cfg.BaseURL,
+		secretProject:   cfg.SecretProject,
+		secretName:      cfg.SecretName,
+		vaultAddr:       cfg.VaultAddr,
+		vaultToken:      cfg.VaultToken,
+		vaultSecretPath: cfg.VaultSecretPath,
+		credentialFile:  cfg.CredentialFile,
+		clients:         make(map[string]*registeredClient),
+		states:          make(map[string]*authorizationState),
+		codes:           make(map[string]*authorizationCode),
 	}
 
 	// Start cleanup goroutines
@@ -220,7 +229,10 @@ func (s *OAuth2Server) cleanupExpiredCodes() {
 	}
 }
 
-// LoadCredentials loads Google OAuth credentials from Secret Manager or file.
+// LoadCredentials loads Google OAuth credentials with priority:
+// 1. GCP Secret Manager (for Cloud Run deployment)
+// 2. HashiCorp Vault (for VPS deployment)
+// 3. Local file (for development)
 func (s *OAuth2Server) LoadCredentials(ctx context.Context) error {
 	s.oauthConfigMu.Lock()
 	defer s.oauthConfigMu.Unlock()
@@ -232,13 +244,23 @@ func (s *OAuth2Server) LoadCredentials(ctx context.Context) error {
 	var credentialsJSON []byte
 	var err error
 
-	// Try Secret Manager first
+	// Try GCP Secret Manager first
 	if s.secretProject != "" && s.secretName != "" {
 		credentialsJSON, err = loadFromSecretManager(ctx, s.secretProject, s.secretName)
 		if err != nil {
 			log.Printf("Failed to load credentials from Secret Manager: %v", err)
 		} else {
 			log.Printf("OAuth credentials loaded from Secret Manager: %s/%s", s.secretProject, s.secretName)
+		}
+	}
+
+	// Try HashiCorp Vault
+	if credentialsJSON == nil && s.vaultAddr != "" && s.vaultSecretPath != "" {
+		credentialsJSON, err = loadFromVault(s.vaultAddr, s.vaultToken, s.vaultSecretPath)
+		if err != nil {
+			log.Printf("Failed to load credentials from Vault: %v", err)
+		} else {
+			log.Printf("OAuth credentials loaded from Vault: %s", s.vaultSecretPath)
 		}
 	}
 
@@ -252,7 +274,7 @@ func (s *OAuth2Server) LoadCredentials(ctx context.Context) error {
 	}
 
 	if credentialsJSON == nil {
-		return fmt.Errorf("no OAuth credentials available: configure Secret Manager or credential file")
+		return fmt.Errorf("no OAuth credentials available: configure Secret Manager, Vault, or credential file")
 	}
 
 	// Parse credentials
@@ -799,6 +821,49 @@ func writeOAuthError(w http.ResponseWriter, errorCode, description string, statu
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(resp)
+}
+
+// loadFromVault loads credentials from HashiCorp Vault KV v2.
+// The secret must contain a "credentials" field with the JSON content.
+func loadFromVault(addr, token, secretPath string) ([]byte, error) {
+	// Build the KV v2 API URL
+	// secretPath is like "secret/credentials/google-credentials"
+	// Vault KV v2 API: GET /v1/secret/data/credentials/google-credentials
+	apiPath := strings.Replace(secretPath, "secret/", "secret/data/", 1)
+	url := fmt.Sprintf("%s/v1/%s", strings.TrimRight(addr, "/"), apiPath)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Vault request: %w", err)
+	}
+	req.Header.Set("X-Vault-Token", token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach Vault at %s: %w", addr, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Vault returned status %d for path %s", resp.StatusCode, secretPath)
+	}
+
+	var vaultResp struct {
+		Data struct {
+			Data map[string]string `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&vaultResp); err != nil {
+		return nil, fmt.Errorf("failed to decode Vault response: %w", err)
+	}
+
+	credentials, ok := vaultResp.Data.Data["credentials"]
+	if !ok || credentials == "" {
+		return nil, fmt.Errorf("Vault secret at %s has no 'credentials' field", secretPath)
+	}
+
+	return []byte(credentials), nil
 }
 
 // loadFromSecretManager loads credentials from Google Secret Manager.
