@@ -1,5 +1,9 @@
 # Spreadsheet Manager - AI Documentation
 
+## Documentation Index
+
+- [Deployment](.agent_docs/deployment.md): VPS deployment, DNS, SSL, credentials, troubleshooting
+
 ## Project Overview
 
 **Type**: Command-line tool + MCP server
