@@ -5,7 +5,7 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -103,7 +103,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		oauthConfig, token, err := s.oauth2Server.ValidateAccessToken(ctx, accessToken)
 		if err != nil {
-			log.Printf("Token validation error: %v", err)
+			slog.Warn("token validation failed", "error", err)
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf(
 				`Bearer error="invalid_token", resource_metadata="%s/.well-known/oauth-protected-resource"`,
 				s.config.BaseURL,
@@ -152,13 +152,16 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Register OAuth2 routes (not protected by auth)
 	s.oauth2Server.SetupRoutes(mux)
-	log.Println("OAuth2 endpoints enabled:")
-	log.Println("  - /.well-known/oauth-protected-resource")
-	log.Println("  - /.well-known/oauth-authorization-server")
-	log.Println("  - /oauth/register")
-	log.Println("  - /oauth/authorize")
-	log.Println("  - /oauth/callback")
-	log.Println("  - /oauth/token")
+	slog.Info("oauth2 endpoints enabled",
+		"endpoints", []string{
+			"/.well-known/oauth-protected-resource",
+			"/.well-known/oauth-authorization-server",
+			"/oauth/register",
+			"/oauth/authorize",
+			"/oauth/callback",
+			"/oauth/token",
+		},
+	)
 
 	// Health check endpoint (not protected by auth)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +175,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// MCP endpoint (protected by OAuth2 Bearer token auth)
 	mux.Handle("/mcp", authedMCPHandler)
 
-	log.Println("Authentication mode: OAuth2 Bearer tokens")
+	slog.Info("authentication mode set", "mode", "oauth2_bearer_tokens")
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
@@ -188,8 +191,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Start server in goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		log.Printf("Starting MCP server on %s", addr)
-		log.Printf("Base URL: %s", s.config.BaseURL)
+		slog.Info("starting mcp server", "addr", addr, "base_url", s.config.BaseURL)
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errChan <- err
 		}
@@ -200,9 +202,9 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errChan:
 		return fmt.Errorf("server error: %w", err)
 	case sig := <-shutdown:
-		log.Printf("Received signal %v, shutting down...", sig)
+		slog.Info("received shutdown signal", "signal", sig)
 	case <-ctx.Done():
-		log.Println("Context cancelled, shutting down...")
+		slog.Info("context cancelled, shutting down")
 	}
 
 	// Graceful shutdown with timeout
@@ -213,7 +215,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
 
-	log.Println("MCP server stopped")
+	slog.Info("mcp server stopped")
 	return nil
 }
 

@@ -9,6 +9,11 @@ services:
       - /app/data/spreadsheet-manager:/data
     env_file:
       - /app/data/spreadsheet-manager/.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     networks:
       - proxy-network
 
