@@ -164,7 +164,7 @@ spreadsheet-manager mcp \
 spreadsheet-manager mcp \
   --port 8080 \
   --host 0.0.0.0 \
-  --base-url https://spreadsheet-manager.scm-platform.org \
+  --base-url https://spreadsheets.mcp.scm-platform.org \
   --secret-project my-gcp-project \
   --secret-name scm-pwd-web
 ```
@@ -174,7 +174,7 @@ spreadsheet-manager mcp \
 ```bash
 docker build -t spreadsheet-manager .
 docker run -p 8080:8080 \
-  -e BASE_URL=https://spreadsheet-manager.scm-platform.org \
+  -e BASE_URL=https://spreadsheets.mcp.scm-platform.org \
   -e CREDENTIAL_FILE=/data/scm-pwd-web.json \
   -v /path/to/credentials:/data \
   spreadsheet-manager

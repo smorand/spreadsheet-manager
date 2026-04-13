@@ -78,7 +78,7 @@ The project includes an HTTP Streamable MCP server (`spreadsheet-manager mcp`) t
 spreadsheet-manager mcp --credential-file ~/.credentials/scm-pwd-web.json --base-url http://localhost:8080
 
 # With environment variables (VPS/Docker)
-PORT=8080 BASE_URL=https://spreadsheet-manager.scm-platform.org spreadsheet-manager mcp
+PORT=8080 BASE_URL=https://spreadsheets.mcp.scm-platform.org spreadsheet-manager mcp
 ```
 
 **MCP Tools (15):** `spreadsheet_create`, `spreadsheet_add_data`, `spreadsheet_import_csv`, `spreadsheet_export_csv`, `spreadsheet_format_cells`, `spreadsheet_style_cells`, `spreadsheet_create_sheet`, `spreadsheet_rename_sheet`, `spreadsheet_list_sheets`, `spreadsheet_add_note`, `spreadsheet_freeze`, `spreadsheet_set_column_width`, `spreadsheet_set_text_wrap`, `spreadsheet_set_alignment`, `spreadsheet_alternate_row_colors`

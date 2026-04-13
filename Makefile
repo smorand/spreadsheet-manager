@@ -261,13 +261,13 @@ check: fmt vet test
 
 # Deploy to VPS
 VPS_HOST=root@31.97.54.67
-VPS_DOMAIN=spreadsheet-manager.scm-platform.org
+VPS_DOMAIN=spreadsheets.mcp.scm-platform.org
 VPS_PORT=8080
 VPS_TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "main")
 
 deploy-vps:
 	@echo "Deploying $(BINARY_NAME)@$(VPS_TAG) to VPS..."
-	@ssh $(VPS_HOST) "cd /opt/vps-management && \
+	@ssh $(VPS_HOST) "cd /app/vps-management && \
 		./scripts/vps-undeploy.sh $(BINARY_NAME) 2>/dev/null; \
 		LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/vps-deploy.sh smorand/$(BINARY_NAME)@$(VPS_TAG) prod $(VPS_DOMAIN):$(VPS_PORT) ./environments"
 	@echo ""

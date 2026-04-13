@@ -2,8 +2,8 @@
 
 ## Production Environment
 
-**URL**: https://spreadsheet-manager.scm-platform.org
-**MCP endpoint**: https://spreadsheet-manager.scm-platform.org/mcp
+**URL**: https://spreadsheets.mcp.scm-platform.org
+**MCP endpoint**: https://spreadsheets.mcp.scm-platform.org/mcp
 **VPS IP**: 31.97.54.67
 **Container**: `spreadsheet-manager` on `proxy-network`
 **Port**: 8080 (internal, nginx proxies HTTPS)
@@ -53,11 +53,11 @@ docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=<token> vault \
 ## DNS
 
 **Zone**: `scm-platform-org` (Google Cloud DNS)
-**Record**: `spreadsheet-manager.scm-platform.org` A `31.97.54.67` (TTL 3600)
+**Record**: `spreadsheets.mcp.scm-platform.org` A `31.97.54.67` (TTL 3600)
 
 ```bash
 # Create (already done)
-gcloud dns record-sets create "spreadsheet-manager.scm-platform.org." \
+gcloud dns record-sets create "spreadsheets.mcp.scm-platform.org." \
   --zone=scm-platform-org --type=A --ttl=3600 --rrdatas="31.97.54.67"
 ```
 
@@ -75,9 +75,9 @@ git push origin main --tags
 
 # 2. Deploy via vps-deploy.sh (on VPS)
 ssh root@31.97.54.67
-cd /opt/vps-management
+cd /app/vps-management
 ./scripts/vps-undeploy.sh spreadsheet-manager
-LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/vps-deploy.sh smorand/spreadsheet-manager@v1.x.0 prod spreadsheet-manager.scm-platform.org:8080 ./environments
+LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/vps-deploy.sh smorand/spreadsheet-manager@v1.x.0 prod spreadsheets.mcp.scm-platform.org:8080 ./environments
 
 # Data in /app/data/spreadsheet-manager/ (.env, Vault config) is preserved across deployments
 ```
